@@ -11,7 +11,7 @@ app = Flask(__name__)
 # La URL de la DB la obtendrá de las variables de entorno de Railway
 # app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 # app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('postgresql://postgres:ucqIVlmRlGawcosGOzfTCkTqCDwhhOPl@postgres.railway.internal:5432/railway')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
