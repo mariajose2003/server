@@ -92,6 +92,8 @@ def generar_claves(cantidad):
 
 # 3. RUTA DE ACTIVACIÓN DE LICENCIAS
 @app.route('/api/activar', methods=['POST'])
+# 3. RUTA DE ACTIVACIÓN DE LICENCIAS (¡CORREGIDA!)
+@app.route('/api/activar', methods=['POST'])
 def activar_licencia():
     data = request.get_json()
     codigo_licencia = data.get('codigo')
@@ -155,7 +157,6 @@ def activar_licencia():
         "token": nuevo_token,
         "expiracion": licencia.fecha_expiracion.isoformat() # Devolvemos la fecha final
     }), 200
-
 
 if __name__ == '__main__':
     with app.app_context():
