@@ -1,1 +1,2 @@
-server: gunicorn -b 0.0.0.0:$PORT app:app
+# Procfile
+web: gunicorn app:app
