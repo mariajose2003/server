@@ -93,7 +93,6 @@ def generar_claves(cantidad):
 # 3. RUTA DE ACTIVACIÓN DE LICENCIAS
 @app.route('/api/activar', methods=['POST'])
 def activar_licencia():
-    # ... (El resto de la función es el mismo)
     data = request.get_json()
     codigo_licencia = data.get('codigo')
     hwid_cliente = data.get('hwid')
@@ -106,40 +105,57 @@ def activar_licencia():
     if not licencia:
         return jsonify({"success": False, "mensaje": "Licencia inválida o no encontrada."}), 404
 
-    # CASO 1: LICENCIA YA ACTIVADA EN ESTE HWID (Revalidación)
-    if licencia.hwid_activacion == hwid_cliente:
-        nuevo_token = uuid4().hex[:32]
-        licencia.token_sesion = nuevo_token
-        licencia.fecha_expiracion = datetime.utcnow() + timedelta(days=7)
-        db.session.commit()
-        return jsonify({
-            "success": True,
-            "mensaje": "Licencia revalidada exitosamente.",
-            "token": nuevo_token,
-            "expiracion": licencia.fecha_expiracion.isoformat()
-        }), 200
-
-    # CASO 2: LICENCIA ACTIVADA EN OTRO HWID (Bloqueo)
-    elif licencia.hwid_activacion is not None and licencia.hwid_activacion != hwid_cliente:
-        return jsonify({
-            "success": False,
-            "mensaje": "Licencia ya está vinculada a otro dispositivo."
-        }), 403 # 403 Forbidden
-
-    # CASO 3: LICENCIA VIRGEN (Primera Activación)
-    else:
+    # CASO 1: LICENCIA VIRGEN (Primera Activación)
+    # (Comprobamos esto primero)
+    if licencia.hwid_activacion is None:
         licencia.hwid_activacion = hwid_cliente
         licencia.fecha_activacion = datetime.utcnow()
         nuevo_token = uuid4().hex[:32]
         licencia.token_sesion = nuevo_token
-        licencia.fecha_expiracion = datetime.utcnow() + timedelta(days=7)
+        
+        # ¡AQUÍ SE GRABA LA EXPIRACIÓN FINAL UNA ÚNICA VEZ!
+        licencia.fecha_expiracion = datetime.utcnow() + timedelta(days=365) 
+        
         db.session.commit()
         return jsonify({
             "success": True,
-            "mensaje": "Licencia activada y vinculada exitosamente.",
+            "mensaje": f"Licencia activada. Válida hasta {licencia.fecha_expiracion.strftime('%Y-%m-%d')}.",
             "token": nuevo_token,
             "expiracion": licencia.fecha_expiracion.isoformat()
         }), 201 # 201 Created
+
+    # CASO 2: LICENCIA ACTIVADA EN OTRO HWID (Bloqueo)
+    if licencia.hwid_activacion != hwid_cliente:
+        return jsonify({
+            "success": False,
+            "mensaje": "Licencia ya está vinculada a otro dispositivo."
+        }), 403 # 403 Forbidden
+    
+    # Si llegamos aquí, el HWID coincide.
+    # Ahora SÍ comprobamos la expiración final.
+    
+    # CASO 3: LICENCIA EXPIRADA (¡NUEVO!)
+    if datetime.utcnow() > licencia.fecha_expiracion:
+        return jsonify({
+            "success": False,
+            "mensaje": f"Tu licencia expiró el {licencia.fecha_expiracion.strftime('%Y-%m-%d')}. Adquiere una nueva."
+        }), 403 # 403 Forbidden
+            
+    # CASO 4: LICENCIA VÁLIDA (Revalidación / Heartbeat)
+    # (HWID coincide Y NO está expirada)
+    nuevo_token = uuid4().hex[:32]
+    licencia.token_sesion = nuevo_token
+    
+    # ¡¡MUY IMPORTANTE: YA NO TOCAMOS la fecha_expiracion!!
+    
+    db.session.commit()
+    return jsonify({
+        "success": True,
+        "mensaje": "Licencia revalidada exitosamente.",
+        "token": nuevo_token,
+        "expiracion": licencia.fecha_expiracion.isoformat() # Devolvemos la fecha final
+    }), 200
+
 
 if __name__ == '__main__':
     with app.app_context():
