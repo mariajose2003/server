@@ -74,7 +74,7 @@ def index():
     except Exception as e:
         return jsonify({"status": "API Activa, pero DB Falló", "error": str(e)}), 500
 
-# 2. RUTA DEL WEBHOOK DE KO-FI (¡NUEVA!)
+# 2. RUTA DEL WEBHOOK DE KO-FI (¡LÓGICA MEJORADA!)
 @app.route('/kofi-webhook', methods=['POST'])
 def handle_kofi_payment():
     try:
@@ -98,20 +98,35 @@ def handle_kofi_payment():
             return "Error: No email", 400
 
         try:
-            # 1. Generar 1 nueva clave
-            nueva_clave_str = str(uuid4())
+            # --- INICIO DE LA NUEVA LÓGICA ---
+            clave_a_enviar_str = None
             
-            # 2. Guardarla en la base de datos
-            nueva_licencia = Licencia(
-                codigo_licencia=nueva_clave_str,
-                buyer_email=buyer_email
-            )
-            db.session.add(nueva_licencia)
-            db.session.commit()
+            # 1. Buscar una clave disponible (sin dueño)
+            # Usamos "with_for_update()" para bloquear la fila y evitar que dos compradores agarren la misma
+            licencia_disponible = db.session.query(Licencia).filter(Licencia.buyer_email == None).with_for_update().first()
+            
+            if licencia_disponible:
+                # 2A. Si encontramos una, la asignamos al comprador
+                licencia_disponible.buyer_email = buyer_email
+                clave_a_enviar_str = licencia_disponible.codigo_licencia
+                print(f"Clave existente {clave_a_enviar_str} asignada a {buyer_email}")
+            else:
+                # 2B. Si no hay, creamos una nueva
+                clave_a_enviar_str = str(uuid4())
+                nueva_licencia = Licencia(
+                    codigo_licencia=clave_a_enviar_str,
+                    buyer_email=buyer_email
+                )
+                db.session.add(nueva_licencia)
+                print(f"No hay claves disponibles. Nueva clave {clave_a_enviar_str} generada para {buyer_email}")
 
-            # 3. Enviar la clave por email al comprador
-            if send_key_to_buyer(nueva_clave_str, buyer_email):
-                print(f"Clave {nueva_clave_str} generada y enviada a {buyer_email}")
+            # 3. Guardar los cambios en la DB (sea update o insert)
+            db.session.commit()
+            # --- FIN DE LA NUEVA LÓGICA ---
+
+            # 4. Enviar la clave por email al comprador
+            if send_key_to_buyer(clave_a_enviar_str, buyer_email):
+                print(f"Clave enviada exitosamente a {buyer_email}")
                 return "OK", 200 # ¡Éxito!
             else:
                 print(f"Error al ENVIAR email a {buyer_email}")
@@ -125,62 +140,32 @@ def handle_kofi_payment():
     # Si no es un "Shop Order", lo ignoramos
     return "OK (Ignorado)", 200
 
+
 # 3. RUTA DE ACTIVACIÓN DE LICENCIAS (Tu código original, sin cambios)
 # (Solo quité el duplicado)
-@app.route('/api/activar', methods=['POST'])
-def activar_licencia():
-    data = request.get_json()
-    codigo_licencia = data.get('codigo')
-    hwid_cliente = data.get('hwid')
+# ¡PROTEGE ESTA RUTA! (ej. /admin/generar_claves_super_secreto/10)
+@app.route('/admin/generar_claves/<int:cantidad>', methods=['POST'])
+def generar_claves(cantidad):
+    """Genera un número específico de licencias únicas y las guarda en la DB."""
+    if cantidad <= 0 or cantidad > 100:
+        return jsonify({"success": False, "mensaje": "Cantidad inválida (1-100)."}), 400
 
-    if not codigo_licencia or not hwid_cliente:
-        return jsonify({"success": False, "mensaje": "Faltan datos de código o HWID."}), 400
+    try:
+        for _ in range(cantidad):
+            codigo = str(uuid4())
+            # Esto crea la clave con buyer_email = NULL (disponible)
+            nueva_licencia = Licencia(codigo_licencia=codigo) 
+            db.session.add(nueva_licencia)
 
-    licencia = Licencia.query.filter_by(codigo_licencia=codigo_licencia).first()
-
-    if not licencia:
-        return jsonify({"success": False, "mensaje": "Licencia inválida o no encontrada."}), 404
-
-    # CASO 1: LICENCIA VIRGEN (Primera Activación)
-    if licencia.hwid_activacion is None:
-        licencia.hwid_activacion = hwid_cliente
-        licencia.fecha_activacion = datetime.utcnow()
-        nuevo_token = uuid4().hex[:32]
-        licencia.token_sesion = nuevo_token
-        licencia.fecha_expiracion = datetime.utcnow() + timedelta(days=365) # 1 año de licencia
-        
         db.session.commit()
         return jsonify({
             "success": True,
-            "mensaje": f"Licencia activada. Válida hasta {licencia.fecha_expiracion.strftime('%Y-%m-%d')}.",
-            "token": nuevo_token,
-            "expiracion": licencia.fecha_expiracion.isoformat()
-        }), 201 # 201 Created
+            "mensaje": f"Se generaron y guardaron {cantidad} licencias 'disponibles'."
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"success": False, "mensaje": f"Error al generar claves: {str(e)}"}), 500
 
-    # CASO 2: LICENCIA ACTIVADA EN OTRO HWID (Bloqueo)
-    if licencia.hwid_activacion != hwid_cliente:
-        return jsonify({
-            "success": False,
-            "mensaje": "Licencia ya está vinculada a otro dispositivo."
-        }), 403 # 403 Forbidden
-    
-    # CASO 3: LICENCIA EXPIRADA
-    if datetime.utcnow() > licencia.fecha_expiracion:
-        return jsonify({
-            "success": False,
-            "mensaje": f"Tu licencia expiró el {licencia.fecha_expiracion.strftime('%Y-%m-%d')}. Adquiere una nueva."
-        }), 403 # 403 Forbidden
-            
-    # CASO 4: LICENCIA VÁLIDA (Revalidación / Heartbeat)
-    nuevo_token = uuid4().hex[:32]
-    licencia.token_sesion = nuevo_token
-    db.session.commit()
-    return jsonify({
-        "success": True,
-        "mensaje": "Licencia revalidada exitosamente.",
-        "token": nuevo_token,
-        "expiracion": licencia.fecha_expiracion.isoformat()
-    }), 200
 
 # --- ARRANQUE DE LA APLICACIÓN ---
 if __name__ == '__main__':
