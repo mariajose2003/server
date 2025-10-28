@@ -11,7 +11,7 @@ from sendgrid.helpers.mail import Mail
 app = Flask(__name__)
 
 # 1. Variables de Entorno (Railway las provee)
-database_url = os.environ.get('DB_FINAL_URL')
+database_url = os.environ.get('DATABASE_URL')
 SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY')
 MY_EMAIL = os.environ.get('MY_EMAIL') # El email desde el que envías
 
