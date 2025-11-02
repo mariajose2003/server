@@ -43,8 +43,8 @@ class Licencia(db.Model):
     def __repr__(self):
         return f'<Licencia {self.codigo_licencia}>'
 
-# --- FUNCIÓN HELPER PARA ENVIAR EMAIL (¡MODIFICADA CON MEJORES INSTRUCCIONES!) ---
-def send_key_to_buyer(key, email):
+# --- FUNCIÓN HELPER PARA ENVIAR EMAIL (¡MODIFICADA CON DETECCIÓN!) ---
+def send_key_to_buyer(key, email, is_renovating):
     """Usa SendGrid para enviar la clave al comprador."""
 
     # --- INICIO DE LA MODIFICACIÓN ---
@@ -56,7 +56,54 @@ def send_key_to_buyer(key, email):
     #
     # ---
 
-    # Plantilla de email mejorada con HTML
+    # --- INICIO DE LA LÓGICA DE EMAIL DINÁMICO ---
+    
+    # 1. Definir las secciones de HTML
+    seccion_nuevos = f"""
+    <div class="section">
+        <h2>¿Eres un usuario nuevo?</h2>
+        <p>Sigue estos 4 pasos para empezar:</p>
+        <ol>
+            <li><b>Descarga el archivo:</b> Haz clic en el enlace para descargar el instalador (es un archivo .zip):<br>
+                <a href="{URL_DEL_INSTALADOR_ZIP}"><b>Descargar MagicDrive PRO (.zip)</b></a>
+            </li>
+            <li>
+                <b>Descomprime el archivo:</b> Ve a tus Descargas, busca el archivo .zip, haz clic derecho sobre él y selecciona "<b>Extraer todo...</b>" o "<b>Unzip</b>".
+            </li>
+            <li>
+                <b>Ejecuta la aplicación:</b> Abre la nueva carpeta que se creó y haz doble clic en <b>MagicDrivePRO.exe</b>.
+            </li>
+            <li>
+                <b>Activa el producto:</b> La aplicación te pedirá una llave. Copia y pega la llave que está arriba en este email.
+            </li>
+        </ol>
+    </div>
+    """
+    
+    # Esta es la sección que el usuario seleccionó y mejoramos
+    seccion_renovacion = """
+    <div class="section">
+        <h2>¿Estás renovando tu licencia?</h2>
+        <p>¡Gracias por continuar con nosotros! El proceso es muy sencillo:</p>
+        <ol>
+            <li><b>Ignora el enlace de descarga.</b> (Ya tienes la aplicación instalada).</li>
+            <li>Abre tu app MagicDrive PRO. Verás la ventana de "Licencia Expirada".</li>
+            <li>Haz clic en el botón <b>"🔑 Ya tengo una llave (Activar)"</b>.</li>
+            <li>Aparecerá la ventana de "Activación". Pega allí tu <b>nueva llave</b> (la de este correo).</li>
+            <li>Haz clic en el botón <b>"Activar"</b> (o presiona la tecla <b>Enter</b>).</li>
+        </ol>
+        <p style="margin-top: 10px;">¡Y listo! Tu acceso se renovará automáticamente por un año más.</p>
+    </div>
+    """
+    
+    # 2. Elegir qué sección mostrar
+    instrucciones_html = ""
+    if is_renovating:
+        instrucciones_html = seccion_renovacion
+    else:
+        instrucciones_html = seccion_nuevos
+
+    # 3. Construir el email completo
     html_content = f"""
     <html>
     <head>
@@ -85,39 +132,8 @@ def send_key_to_buyer(key, email):
             <p>Tu llave de licencia única está lista. ¡Guárdala en un lugar seguro!</p>
             <div class="key">{key}</div>
 
-            <!-- Sección para Nuevos Usuarios -->
-            <div class="section">
-                <h2>¿Eres un usuario nuevo?</h2>
-                <p>Sigue estos 4 pasos para empezar:</p>
-                <ol>
-                    <li><b>Descarga el archivo:</b> Haz clic en el enlace para descargar el instalador (es un archivo .zip):<br>
-                        <a href="{URL_DEL_INSTALADOR_ZIP}"><b>Descargar MagicDrive PRO (.zip)</b></a>
-                    </li>
-                    <li>
-                        <b>Descomprime el archivo:</b> Ve a tus Descargas, busca el archivo .zip, haz clic derecho sobre él y selecciona "<b>Extraer todo...</b>" o "<b>Unzip</b>".
-                    </li>
-                    <li>
-                        <b>Ejecuta la aplicación:</b> Abre la nueva carpeta que se creó y haz doble clic en <b>MagicDrivePRO.exe</b>.
-                    </li>
-                    <li>
-                        <b>Activa el producto:</b> La aplicación te pedirá una llave. Copia y pega la llave que está arriba en este email.
-                    </li>
-                </ol>
-            </div>
-
-            <!-- Sección para Renovaciones -->
-           <div class="section">
-            <h2>¿Estás renovando tu licencia?</h2>
-            <p>¡Gracias por continuar con nosotros! El proceso es muy sencillo:</p>
-            <ol>
-                <li><b>Ignora el enlace de descarga.</b> (Ya tienes la aplicación instalada).</li>
-                <li>Abre tu app MagicDrive PRO. Verás la ventana de "Licencia Expirada".</li>
-                <li>Haz clic en el botón <b>"🔑 Ya tengo una llave (Activar)"</b>.</li>
-                <li>Aparecerá la ventana de "Activación". Pega allí tu <b>nueva llave</b> (la de este correo).</li>
-                <li>Haz clic en el botón <b>"Activar"</b> (o presiona la tecla <b>Enter</b>).</li>
-            </ol>
-            <p style="margin-top: 10px;">¡Y listo! Tu acceso se renovará automáticamente por un año más.</p>
-        </div>
+            <!-- Aquí se insertan las instrucciones correctas -->
+            {instrucciones_html}
 
             <p style="margin-top: 30px; font-size: 12px; color: #777;">
                 Si tienes algún problema, contacta a soporte: {MY_EMAIL}
@@ -126,7 +142,8 @@ def send_key_to_buyer(key, email):
     </body>
     </html>
     """
-    # --- FIN DE LA MODIFICACIÓN ---
+    # --- FIN DE LA LÓGICA DE EMAIL DINÁMICO ---
+
 
     message = Mail(
         from_email=MY_EMAIL,
@@ -155,7 +172,7 @@ def index():
     except Exception as e:
         return jsonify({"status": "API Activa, pero DB Falló", "error": str(e)}), 500
 
-# 2. RUTA DEL WEBHOOK DE KO-FI
+# 2. RUTA DEL WEBHOOK DE KO-FI (¡MODIFICADA CON DETECCIÓN!)
 @app.route('/kofi-webhook', methods=['POST'])
 def handle_kofi_payment():
     try:
@@ -178,15 +195,29 @@ def handle_kofi_payment():
             return "Error: No email", 400
 
         try:
+            # --- INICIO DE LA NUEVA LÓGICA DE DETECCIÓN ---
             clave_a_enviar_str = None
             
+            # 1. Detectar si es usuario nuevo o de renovación
+            # Buscamos si CUALQUIER licencia (activa o expirada) pertenece a este email
+            licencia_previa = db.session.query(Licencia).filter_by(buyer_email=buyer_email).first()
+            is_renovating = (licencia_previa is not None)
+            
+            if is_renovating:
+                print(f"Detectado usuario de renovación: {buyer_email}")
+            else:
+                print(f"Detectado usuario nuevo: {buyer_email}")
+
+            # 2. Buscar una clave disponible (sin dueño)
             licencia_disponible = db.session.query(Licencia).filter(Licencia.buyer_email == None).with_for_update().first()
             
             if licencia_disponible:
+                # 3A. Si encontramos una, la asignamos al comprador
                 licencia_disponible.buyer_email = buyer_email
                 clave_a_enviar_str = licencia_disponible.codigo_licencia
                 print(f"Clave existente {clave_a_enviar_str} asignada a {buyer_email}")
             else:
+                # 3B. Si no hay, creamos una nueva
                 clave_a_enviar_str = str(uuid4())
                 nueva_licencia = Licencia(
                     codigo_licencia=clave_a_enviar_str,
@@ -195,15 +226,18 @@ def handle_kofi_payment():
                 db.session.add(nueva_licencia)
                 print(f"No hay claves disponibles. Nueva clave {clave_a_enviar_str} generada para {buyer_email}")
 
+            # 4. Guardar los cambios en la DB
             db.session.commit()
+            # --- FIN DE LA NUEVA LÓGICA DE DETECCIÓN ---
 
-            if send_key_to_buyer(clave_a_enviar_str, buyer_email):
+            # 5. Enviar la clave por email al comprador (¡pasando el flag!)
+            if send_key_to_buyer(clave_a_enviar_str, buyer_email, is_renovating):
                 print(f"Clave enviada exitosamente a {buyer_email}")
                 return "OK", 200
             else:
                 print(f"Error al ENVIAR email a {buyer_email}")
                 return "Error interno de email", 500
-                
+                    
         except Exception as e:
             print(f"Error de base de datos o email: {e}")
             db.session.rollback()
