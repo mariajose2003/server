@@ -35,30 +35,25 @@ class Licencia(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     codigo_licencia = db.Column(db.String(36), unique=True, nullable=False) # UUID
     hwid_activacion = db.Column(db.String(100), nullable=True, default=None) # Hardware ID
-    fecha_activacion = db.Column(db.DateTime, nullable=True, default=None)
+    # --- ¡CORREGIDO! Hacemos que la DB guarde la zona horaria ---
+    fecha_activacion = db.Column(db.DateTime(timezone=True), nullable=True, default=None)
     token_sesion = db.Column(db.String(32), unique=True, nullable=True, default=None)
-    fecha_expiracion = db.Column(db.DateTime, nullable=True, default=None)
+    fecha_expiracion = db.Column(db.DateTime(timezone=True), nullable=True, default=None) # <-- CAMBIO
     buyer_email = db.Column(db.String(100), nullable=True, default=None)
 
     def __repr__(self):
         return f'<Licencia {self.codigo_licencia}>'
 
 # --- FUNCIÓN HELPER PARA ENVIAR EMAIL (¡MODIFICADA CON DETECCIÓN!) ---
-def send_key_to_buyer(key, email, is_renovating):
+def send_key_to_buyer(key, email, is_renovating, was_active_and_extended):
     """Usa SendGrid para enviar la clave al comprador."""
 
-    # --- INICIO DE LA MODIFICACIÓN ---
-    #
     # ¡IMPORTANTE!
     # Pon aquí el enlace de descarga de Google Drive a tu instalador .zip
-    #
     URL_DEL_INSTALADOR_ZIP = "https://drive.google.com/file/d/TU-ENLACE-AQUI/view?usp=sharing" # <- ¡CAMBIA ESTO!
-    #
-    # ---
 
     # --- INICIO DE LA LÓGICA DE EMAIL DINÁMICO ---
     
-    # 1. Definir las secciones de HTML
     seccion_nuevos = f"""
     <div class="section">
         <h2>¿Eres un usuario nuevo?</h2>
@@ -80,8 +75,7 @@ def send_key_to_buyer(key, email, is_renovating):
     </div>
     """
     
-    # Esta es la sección que el usuario seleccionó y mejoramos
-    seccion_renovacion = """
+    seccion_renovacion_expirada = """
     <div class="section">
         <h2>¿Estás renovando tu licencia?</h2>
         <p>¡Gracias por continuar con nosotros! El proceso es muy sencillo:</p>
@@ -96,14 +90,27 @@ def send_key_to_buyer(key, email, is_renovating):
     </div>
     """
     
-    # 2. Elegir qué sección mostrar
+    # --- ¡NUEVA SECCIÓN! ---
+    seccion_renovacion_extendida = """
+    <div class="section">
+        <h2>¡Licencia Extendida!</h2>
+        <p>¡Gracias por renovar antes de tiempo! Hemos <b>sumado 365 días</b> a tu licencia actual.</p>
+        <p><b>No necesitas hacer nada.</b> Tu aplicación se actualizará automáticamente con la nueva fecha de expiración.</p>
+        <p>Tu llave sigue siendo la misma:</p>
+    </div>
+    """
+    
     instrucciones_html = ""
-    if is_renovating:
-        instrucciones_html = seccion_renovacion
+    titulo_principal = "¡Gracias por tu compra de MagicDrive PRO!"
+    
+    if is_renovating and was_active_and_extended:
+        instrucciones_html = seccion_renovacion_extendida
+        titulo_principal = "¡Tu licencia de MagicDrive PRO ha sido extendida!"
+    elif is_renovating and not was_active_and_extended:
+        instrucciones_html = seccion_renovacion_expirada
     else:
         instrucciones_html = seccion_nuevos
 
-    # 3. Construir el email completo
     html_content = f"""
     <html>
     <head>
@@ -127,9 +134,9 @@ def send_key_to_buyer(key, email, is_renovating):
     </head>
     <body>
         <div class="container">
-            <h1>¡Gracias por tu compra de MagicDrive PRO!</h1>
+            <h1>{titulo_principal}</h1>
             
-            <p>Tu llave de licencia única está lista. ¡Guárdala en un lugar seguro!</p>
+            <p>Tu llave de licencia única es:</p>
             <div class="key">{key}</div>
 
             <!-- Aquí se insertan las instrucciones correctas -->
@@ -142,8 +149,6 @@ def send_key_to_buyer(key, email, is_renovating):
     </body>
     </html>
     """
-    # --- FIN DE LA LÓGICA DE EMAIL DINÁMICO ---
-
 
     message = Mail(
         from_email=MY_EMAIL,
@@ -161,18 +166,17 @@ def send_key_to_buyer(key, email, is_renovating):
 
 # --- RUTAS DE LA API ---
 
-# 1. RUTA DE SALUD (HEALTH CHECK)
 @app.route('/', methods=['GET'])
 def index():
     """Ruta para verificar que la API está viva y funcionando."""
     try:
         with app.app_context():
-            db.create_all() # Asegura que las tablas existan
+            db.create_all()
         return jsonify({"status": "API Activa", "message": "Conexión DB OK."}), 200
     except Exception as e:
         return jsonify({"status": "API Activa, pero DB Falló", "error": str(e)}), 500
 
-# 2. RUTA DEL WEBHOOK DE KO-FI (¡MODIFICADA CON DETECCIÓN!)
+# 2. RUTA DEL WEBHOOK DE KO-FI (¡LÓGICA MEJORADA POR TI!)
 @app.route('/kofi-webhook', methods=['POST'])
 def handle_kofi_payment():
     try:
@@ -195,43 +199,54 @@ def handle_kofi_payment():
             return "Error: No email", 400
 
         try:
-            # --- INICIO DE LA NUEVA LÓGICA DE DETECCIÓN ---
+            # --- INICIO DE LA NUEVA LÓGICA (TU IDEA) ---
             clave_a_enviar_str = None
+            was_active_and_extended = False # Flag para el email
             
             # 1. Detectar si es usuario nuevo o de renovación
-            # Buscamos si CUALQUIER licencia (activa o expirada) pertenece a este email
             licencia_previa = db.session.query(Licencia).filter_by(buyer_email=buyer_email).first()
             is_renovating = (licencia_previa is not None)
             
             if is_renovating:
                 print(f"Detectado usuario de renovación: {buyer_email}")
-            else:
-                print(f"Detectado usuario nuevo: {buyer_email}")
+                licencia_a_renovar = db.session.query(Licencia).filter_by(buyer_email=buyer_email).order_by(Licencia.fecha_expiracion.desc()).first()
+                clave_a_enviar_str = licencia_a_renovar.codigo_licencia
 
-            # 2. Buscar una clave disponible (sin dueño)
-            licencia_disponible = db.session.query(Licencia).filter(Licencia.buyer_email == None).with_for_update().first()
-            
-            if licencia_disponible:
-                # 3A. Si encontramos una, la asignamos al comprador
-                licencia_disponible.buyer_email = buyer_email
-                clave_a_enviar_str = licencia_disponible.codigo_licencia
-                print(f"Clave existente {clave_a_enviar_str} asignada a {buyer_email}")
+                # --- ¡NUEVA LÓGICA DE "STACKING"! ---
+                # Comprobar si la licencia AÚN ESTÁ ACTIVA
+                if licencia_a_renovar.fecha_expiracion and datetime.utcnow() < licencia_a_renovar.fecha_expiracion:
+                    # --- CASO 1: AÚN ACTIVA (Sumar días) ---
+                    print(f"Licencia {clave_a_enviar_str} aún está activa. Sumando 365 días.")
+                    licencia_a_renovar.fecha_expiracion = licencia_a_renovar.fecha_expiracion + timedelta(days=365)
+                    licencia_a_renovar.token_sesion = None # Forzar re-validación en el heartbeat
+                    was_active_and_extended = True
+                    print(f"Nueva expiración: {licencia_a_renovar.fecha_expiracion}")
+
+                else:
+                    # --- CASO 2: EXPIRADA (Resetear) ---
+                    print(f"Licencia {clave_a_enviar_str} está expirada. Reseteando para reactivación.")
+                    licencia_a_renovar.hwid_activacion = None
+                    licencia_a_renovar.fecha_activacion = None
+                    licencia_a_renovar.token_sesion = None
+                    # La fecha de expiración se pondrá en la API cuando la active (Caso 1)
+
             else:
-                # 3B. Si no hay, creamos una nueva
+                # --- LÓGICA DE USUARIO NUEVO (Crear renglón) ---
+                print(f"Detectado usuario nuevo: {buyer_email}")
                 clave_a_enviar_str = str(uuid4())
                 nueva_licencia = Licencia(
                     codigo_licencia=clave_a_enviar_str,
                     buyer_email=buyer_email
                 )
                 db.session.add(nueva_licencia)
-                print(f"No hay claves disponibles. Nueva clave {clave_a_enviar_str} generada para {buyer_email}")
+                print(f"Nueva clave {clave_a_enviar_str} generada para {buyer_email}")
 
-            # 4. Guardar los cambios en la DB
+            # 4. Guardar los cambios en la DB (sea update o insert)
             db.session.commit()
-            # --- FIN DE LA NUEVA LÓGICA DE DETECCIÓN ---
+            # --- FIN DE LA NUEVA LÓGICA ---
 
             # 5. Enviar la clave por email al comprador (¡pasando el flag!)
-            if send_key_to_buyer(clave_a_enviar_str, buyer_email, is_renovating):
+            if send_key_to_buyer(clave_a_enviar_str, buyer_email, is_renovating, was_active_and_extended):
                 print(f"Clave enviada exitosamente a {buyer_email}")
                 return "OK", 200
             else:
@@ -283,13 +298,15 @@ def activar_licencia():
     if not licencia:
         return jsonify({"success": False, "mensaje": "Licencia inválida o no encontrada."}), 404
 
-    # CASO 1: LICENCIA VIRGEN (Primera Activación)
+    # CASO 1: LICENCIA VIRGEN (Primera Activación O Renovación Reseteada)
     if licencia.hwid_activacion is None:
         licencia.hwid_activacion = hwid_cliente
         licencia.fecha_activacion = datetime.utcnow()
         nuevo_token = str(uuid4().hex[:32])
         licencia.token_sesion = nuevo_token
-        licencia.fecha_expiracion = datetime.utcnow() + timedelta(days=365) # 1 año
+        # ¡IMPORTANTE! Si la fecha ya está en el futuro (por "stacking"), no la sobrescribas
+        if not licencia.fecha_expiracion or licencia.fecha_expiracion < datetime.utcnow():
+            licencia.fecha_expiracion = datetime.utcnow() + timedelta(days=365) # 1 año
         
         db.session.commit()
         return jsonify({
@@ -306,7 +323,7 @@ def activar_licencia():
             "mensaje": "Licencia ya está vinculada a otro dispositivo."
         }), 403
     
-    # CASO 3: LICENCIA EXPIRADA
+    # CASO 3: LICENCIA EXPIRADA (Si el webhook falló y no se reseteó)
     if datetime.utcnow() > licencia.fecha_expiracion:
         return jsonify({
             "success": False,
