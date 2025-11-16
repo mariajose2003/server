@@ -3,7 +3,7 @@ import json
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from uuid import uuid4
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone # Importar timezone
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
@@ -17,7 +17,7 @@ MY_EMAIL = os.environ.get('MY_EMAIL') # El email desde el que envías
 
 # 2. Validar Configuración Crítica
 if not database_url or not SENDGRID_API_KEY or not MY_EMAIL:
-    raise RuntimeError("ERROR CRÍTICO: Faltan variables de entorno (DB_FINAL_URL, SENDGRID_API_KEY, o MY_EMAIL).")
+    raise RuntimeError("ERROR CRÍTICO: Faltan variables de entorno (DATABASE_URL, SENDGRID_API_KEY, o MY_EMAIL).")
 
 # 3. Corregir el prefijo de la DB para SQLAlchemy
 if database_url.startswith("postgres://"):
@@ -35,10 +35,9 @@ class Licencia(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     codigo_licencia = db.Column(db.String(36), unique=True, nullable=False) # UUID
     hwid_activacion = db.Column(db.String(100), nullable=True, default=None) # Hardware ID
-    # --- ¡CORREGIDO! Hacemos que la DB guarde la zona horaria ---
-    fecha_activacion = db.Column(db.DateTime(timezone=True), nullable=True, default=None)
+    fecha_activacion = db.Column(db.DateTime(timezone=True), nullable=True, default=None) # Añadido timezone=True
     token_sesion = db.Column(db.String(32), unique=True, nullable=True, default=None)
-    fecha_expiracion = db.Column(db.DateTime(timezone=True), nullable=True, default=None) # <-- CAMBIO
+    fecha_expiracion = db.Column(db.DateTime(timezone=True), nullable=True, default=None) # Añadido timezone=True
     buyer_email = db.Column(db.String(100), nullable=True, default=None)
 
     def __repr__(self):
@@ -49,7 +48,6 @@ def send_key_to_buyer(key, email, is_renovating, was_active_and_extended):
     """Usa SendGrid para enviar la clave al comprador."""
 
     # ¡IMPORTANTE!
-    # Pon aquí el enlace de descarga de Google Drive a tu instalador .zip
     URL_DEL_INSTALADOR_ZIP = "https://drive.google.com/file/d/TU-ENLACE-AQUI/view?usp=sharing" # <- ¡CAMBIA ESTO!
 
     # --- INICIO DE LA LÓGICA DE EMAIL DINÁMICO ---
@@ -90,7 +88,6 @@ def send_key_to_buyer(key, email, is_renovating, was_active_and_extended):
     </div>
     """
     
-    # --- ¡NUEVA SECCIÓN! ---
     seccion_renovacion_extendida = """
     <div class="section">
         <h2>¡Licencia Extendida!</h2>
@@ -199,11 +196,9 @@ def handle_kofi_payment():
             return "Error: No email", 400
 
         try:
-            # --- INICIO DE LA NUEVA LÓGICA (TU IDEA) ---
             clave_a_enviar_str = None
             was_active_and_extended = False # Flag para el email
             
-            # 1. Detectar si es usuario nuevo o de renovación
             licencia_previa = db.session.query(Licencia).filter_by(buyer_email=buyer_email).first()
             is_renovating = (licencia_previa is not None)
             
@@ -213,12 +208,11 @@ def handle_kofi_payment():
                 clave_a_enviar_str = licencia_a_renovar.codigo_licencia
 
                 # --- ¡NUEVA LÓGICA DE "STACKING"! ---
-                # Comprobar si la licencia AÚN ESTÁ ACTIVA
-                if licencia_a_renovar.fecha_expiracion and datetime.utcnow() < licencia_a_renovar.fecha_expiracion:
+                if licencia_a_renovar.fecha_expiracion and datetime.now(timezone.utc) < licencia_a_renovar.fecha_expiracion:
                     # --- CASO 1: AÚN ACTIVA (Sumar días) ---
                     print(f"Licencia {clave_a_enviar_str} aún está activa. Sumando 365 días.")
                     licencia_a_renovar.fecha_expiracion = licencia_a_renovar.fecha_expiracion + timedelta(days=365)
-                    licencia_a_renovar.token_sesion = None # Forzar re-validación en el heartbeat
+                    licencia_a_renovar.token_sesion = None
                     was_active_and_extended = True
                     print(f"Nueva expiración: {licencia_a_renovar.fecha_expiracion}")
 
@@ -228,7 +222,7 @@ def handle_kofi_payment():
                     licencia_a_renovar.hwid_activacion = None
                     licencia_a_renovar.fecha_activacion = None
                     licencia_a_renovar.token_sesion = None
-                    # La fecha de expiración se pondrá en la API cuando la active (Caso 1)
+                    licencia_a_renovar.fecha_expiracion = None # Se pondrá en la API
 
             else:
                 # --- LÓGICA DE USUARIO NUEVO (Crear renglón) ---
@@ -241,11 +235,8 @@ def handle_kofi_payment():
                 db.session.add(nueva_licencia)
                 print(f"Nueva clave {clave_a_enviar_str} generada para {buyer_email}")
 
-            # 4. Guardar los cambios en la DB (sea update o insert)
             db.session.commit()
-            # --- FIN DE LA NUEVA LÓGICA ---
 
-            # 5. Enviar la clave por email al comprador (¡pasando el flag!)
             if send_key_to_buyer(clave_a_enviar_str, buyer_email, is_renovating, was_active_and_extended):
                 print(f"Clave enviada exitosamente a {buyer_email}")
                 return "OK", 200
@@ -298,15 +289,18 @@ def activar_licencia():
     if not licencia:
         return jsonify({"success": False, "mensaje": "Licencia inválida o no encontrada."}), 404
 
+    ahora = datetime.now(timezone.utc)
+
     # CASO 1: LICENCIA VIRGEN (Primera Activación O Renovación Reseteada)
     if licencia.hwid_activacion is None:
         licencia.hwid_activacion = hwid_cliente
-        licencia.fecha_activacion = datetime.utcnow()
+        licencia.fecha_activacion = ahora
         nuevo_token = str(uuid4().hex[:32])
         licencia.token_sesion = nuevo_token
-        # ¡IMPORTANTE! Si la fecha ya está en el futuro (por "stacking"), no la sobrescribas
-        if not licencia.fecha_expiracion or licencia.fecha_expiracion < datetime.utcnow():
-            licencia.fecha_expiracion = datetime.utcnow() + timedelta(days=365) # 1 año
+        
+        # Si la fecha ya está en el futuro (por "stacking"), no la sobrescribas
+        if not licencia.fecha_expiracion or licencia.fecha_expiracion < ahora:
+            licencia.fecha_expiracion = ahora + timedelta(days=365) # 1 año
         
         db.session.commit()
         return jsonify({
@@ -323,8 +317,12 @@ def activar_licencia():
             "mensaje": "Licencia ya está vinculada a otro dispositivo."
         }), 403
     
-    # CASO 3: LICENCIA EXPIRADA (Si el webhook falló y no se reseteó)
-    if datetime.utcnow() > licencia.fecha_expiracion:
+    # --- ¡CAMBIO AQUÍ! ---
+    # Comparamos solo la .date() (el día), ignorando la hora UTC.
+    # Así, la licencia es válida HASTA el último segundo del día de expiración.
+    #
+    # CASO 3: LICENCIA EXPIRADA
+    if ahora.date() > licencia.fecha_expiracion.date():
         return jsonify({
             "success": False,
             "mensaje": f"Tu licencia expiró el {licencia.fecha_expiracion.strftime('%Y-%m-%d')}. Adquiere una nueva."
