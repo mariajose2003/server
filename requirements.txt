@@ -4,3 +4,5 @@ Flask-SQLAlchemy
 psycopg2-binary
 sendgrid
 gunicorn
+Flask-SocketIO
+eventlet
