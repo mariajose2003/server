@@ -5,4 +5,8 @@ flask-socketio
 python-dotenv
 sendgrid
 psycopg2-binary
+<<<<<<< HEAD
 gunicorn
+=======
+gunicorn
+>>>>>>> f8b8f17 (actualizar requirements)
