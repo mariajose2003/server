@@ -1,9 +1,11 @@
 import os
 import json
-import eventlet # Necesario para SocketIO en Railway
+from dotenv import load_dotenv
+load_dotenv()  # ← Esto carga el .env
+#import eventlet
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from flask_socketio import SocketIO, emit # NUEVOS IMPORTS
+from flask_socketio import SocketIO, emit
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone 
 from sendgrid import SendGridAPIClient
@@ -34,13 +36,12 @@ db = SQLAlchemy(app)
 
 # --- INICIALIZAR SOCKETIO ---
 # Usamos message_queue para que los workers puedan comunicarse entre sí (necesario en Railway)
-socketio = SocketIO(app, async_mode='eventlet', message_queue=database_url) 
+socketio = SocketIO(app, async_mode='threading', cors_allowed_origins='*') 
 # -----------------------------
 
 
 # --- MODELO DE LA BASE DE DATOS ---
 class Licencia(db.Model):
-    # ... (Modelo omitido por ser idéntico al anterior)
     id = db.Column(db.Integer, primary_key=True)
     codigo_licencia = db.Column(db.String(36), unique=True, nullable=False)
     hwid_activacion = db.Column(db.String(100), nullable=True, default=None)
@@ -49,7 +50,6 @@ class Licencia(db.Model):
     fecha_expiracion = db.Column(db.DateTime(timezone=True), nullable=True, default=None)
     buyer_email = db.Column(db.String(100), nullable=True, default=None)
     socket_id = db.Column(db.String(50), nullable=True, default=None) # NUEVO: Para enviar mensajes directos
-    # ...
 
 # --- RUTAS Y FUNCIONES DE ASISTENCIA ---
 
@@ -57,11 +57,28 @@ class Licencia(db.Model):
 # ... (Por favor, inserta todas esas funciones, incluyendo send_key_to_buyer)
 
 # --- FUNCIÓN HELPER PARA ENVIAR EMAIL ---
-# (Asumo que esta función fue pegada aquí en el código final del usuario)
 def send_key_to_buyer(key, email, is_renovating, was_active_and_extended):
-    # ... (código de SendGrid) ...
-    # NOTA: Debes pegar toda tu función send_key_to_buyer aquí.
-    return True # Placeholder
+    try:
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        from_email = MY_EMAIL
+        to_email = email
+        subject = "Tu Licencia de Software" if not is_renovating else "Renovación de Licencia de Software"
+        content = f"Hola,\n\nTu clave de licencia es: {key}\n\n"
+        if is_renovating:
+            content += "Tu licencia ha sido renovada exitosamente.\n"
+            if was_active_and_extended:
+                content += "Como tu licencia estaba activa, se ha extendido la fecha de expiración.\n"
+        else:
+            content += "Gracias por tu compra.\n"
+        content += "\nSaludos,\nEquipo de Soporte"
+        
+        message = Mail(from_email=from_email, to_emails=to_email, subject=subject, plain_text_content=content)
+        sg.send(message)
+        print(f"Email enviado a {email} con clave {key}")
+        return True
+    except Exception as e:
+        print(f"Error enviando email: {e}")
+        return False
 
 # 1. RUTA DE SALUD (HEALTH CHECK) - (Se mantiene HTTP)
 @app.route('/', methods=['GET'])
@@ -74,18 +91,75 @@ def index():
         return jsonify({"status": "API Activa, pero DB Falló", "error": str(e)}), 500
 
 # 2. RUTA DEL WEBHOOK DE KO-FI - (Se mantiene HTTP)
-# (La función handle_kofi_payment es idéntica, pero debe actualizar el socket_id si el usuario renueva)
 @app.route('/kofi-webhook', methods=['POST'])
 def handle_kofi_payment():
-    # NOTA: Dentro de esta función, la lógica de renovación debe actualizar el campo 'socket_id = None'
-    # ... (Pega tu código de handle_kofi_payment aquí) ...
-    return "OK (Ignorado)", 200
+    try:
+        data = request.get_json()
+        if not data:
+            return "No data", 400
+        
+        # Verificar token de verificación si es necesario (opcional)
+        # verification_token = data.get('verification_token')
+        # if verification_token != os.environ.get('KOFI_VERIFICATION_TOKEN'):
+        #     return "Invalid token", 403
+        
+        buyer_email = data.get('email')
+        amount = data.get('amount')
+        message = data.get('message', '')  # Mensaje del comprador
+        
+        if not buyer_email:
+            return "Email faltante", 400
+        
+        with app.app_context():
+            # Verificar si es renovación
+            if "RENOVAR:" in message.upper():
+                # Es renovación
+                codigo_licencia = message.split("RENOVAR:")[1].strip()
+                licencia = Licencia.query.filter_by(codigo_licencia=codigo_licencia, buyer_email=buyer_email).first()
+                if licencia:
+                    # Extender expiración
+                    licencia.fecha_expiracion += timedelta(days=365)
+                    licencia.socket_id = None  # Resetear socket_id para forzar revalidación
+                    db.session.commit()
+                    # Enviar confirmación
+                    send_key_to_buyer(codigo_licencia, buyer_email, True, True)
+                    print(f"Licencia renovada: {codigo_licencia}")
+                else:
+                    print(f"Licencia no encontrada para renovación: {codigo_licencia}")
+                    return "Licencia no encontrada", 400
+            else:
+                # Nueva compra
+                nueva_licencia = Licencia(
+                    codigo_licencia=str(uuid4()),
+                    buyer_email=buyer_email,
+                    fecha_expiracion=datetime.now(timezone.utc) + timedelta(days=365)
+                )
+                db.session.add(nueva_licencia)
+                db.session.commit()
+                # Enviar clave
+                send_key_to_buyer(nueva_licencia.codigo_licencia, buyer_email, False, False)
+                print(f"Nueva licencia generada: {nueva_licencia.codigo_licencia}")
+        
+        return "OK", 200
+    except Exception as e:
+        print(f"Error en webhook: {e}")
+        return "Error", 500
 
 # 3. RUTA PARA GENERAR CLAVES - (Se mantiene HTTP)
 @app.route('/admin/generar_claves/<int:cantidad>', methods=['POST'])
 def generar_claves(cantidad):
-    # ... (Pega tu código de generar_claves aquí) ...
-    return jsonify({"success": True, "mensaje": f"Se generaron {cantidad} licencias."}), 200
+    if cantidad <= 0 or cantidad > 100:
+        return jsonify({"success": False, "mensaje": "Cantidad inválida (1-100)."}), 400
+    
+    try:
+        with app.app_context():
+            for _ in range(cantidad):
+                nueva_licencia = Licencia(codigo_licencia=str(uuid4()))
+                db.session.add(nueva_licencia)
+            db.session.commit()
+        return jsonify({"success": True, "mensaje": f"Se generaron {cantidad} licencias."}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # --- NUEVOS EVENTOS SOCKETIO (REEMPLAZA /api/activar) ---
@@ -136,7 +210,7 @@ def handle_activacion(data):
             })
             
             # (Inicias aquí la comprobación de expiración en segundo plano)
-            # socketio.start_background_task(target=check_license_expiration, license_id=licencia.id) 
+            socketio.start_background_task(target=check_license_expiration, license_id=licencia.id) 
             
         elif licencia.hwid_activacion != hwid_cliente:
             # CASO 2: BLOQUEO POR HWID
@@ -152,6 +226,17 @@ def handle_activacion(data):
             licencia.socket_id = session_id # ACTUALIZAMOS EL ID DE SESIÓN
             db.session.commit()
             emit('license_response', {"success": True, "mensaje": "Revalidación exitosa."})
+
+
+# --- FUNCIÓN PARA COMPROBAR EXPIRACIÓN EN SEGUNDO PLANO ---
+def check_license_expiration(license_id):
+    while True:
+        socketio.sleep(3600)  # Chequear cada hora
+        with app.app_context():
+            licencia = Licencia.query.get(license_id)
+            if licencia and licencia.socket_id and datetime.now(timezone.utc) > licencia.fecha_expiracion:
+                socketio.emit('license_expired', {"mensaje": "Tu licencia ha expirado. Por favor, renueva."}, to=licencia.socket_id)
+                break
 
 
 # --- ARRANQUE DE LA APLICACIÓN (Importante para SocketIO) ---
