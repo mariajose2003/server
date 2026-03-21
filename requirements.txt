@@ -1,8 +1,8 @@
 # requirements.txt
-Flask
-Flask-SQLAlchemy
-psycopg2-binary
+flask
+flask-sqlalchemy
+flask-socketio
+python-dotenv
 sendgrid
+psycopg2-binary
 gunicorn
-Flask-SocketIO
-eventlet
