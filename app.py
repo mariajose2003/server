@@ -206,7 +206,8 @@ def handle_activacion(data):
             emit('license_response', {
                 "success": True,
                 "mensaje": "Activación exitosa.",
-                "expiracion": licencia.fecha_expiracion.isoformat()
+                "expiracion": licencia.fecha_expiracion.isoformat(),
+                "token_sesion": licencia.token_sesion
             })
             
             # (Inicias aquí la comprobación de expiración en segundo plano)
