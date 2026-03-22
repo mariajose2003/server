@@ -225,7 +225,7 @@ def handle_activacion(data):
             licencia.token_sesion = str(uuid4().hex[:32])
             licencia.socket_id = session_id # ACTUALIZAMOS EL ID DE SESIÓN
             db.session.commit()
-            emit('license_response', {"success": True, "mensaje": "Revalidación exitosa."})
+            emit('license_response', {"success": True, "mensaje": "Revalidación exitosa.", "expiracion": licencia.fecha_expiracion.isoformat()})
 
 
 # --- FUNCIÓN PARA COMPROBAR EXPIRACIÓN EN SEGUNDO PLANO ---
