@@ -222,11 +222,22 @@ def handle_activacion(data):
             emit('license_response', {"success": False, "mensaje": "Licencia expirada. Renueve."})
 
         else:
-            # CASO 4: REVALIDACIÓN EXITOSA
+            # CASO 4: REVALIDACIÓN - verificar token además del HWID
+            token_cliente = data.get('token_sesion')
+            if token_cliente != licencia.token_sesion:
+                emit('license_response', {"success": False, "mensaje": "Token inválido. Re-activa tu licencia."})
+                return
+            
+            # Token válido - renovar
             licencia.token_sesion = str(uuid4().hex[:32])
-            licencia.socket_id = session_id # ACTUALIZAMOS EL ID DE SESIÓN
+            licencia.socket_id = session_id
             db.session.commit()
-            emit('license_response', {"success": True, "mensaje": "Revalidación exitosa.", "expiracion": licencia.fecha_expiracion.isoformat(), "token_sesion": licencia.token_sesion})
+            emit('license_response', {
+                "success": True,
+                "mensaje": "Revalidación exitosa.",
+                "expiracion": licencia.fecha_expiracion.isoformat(),
+                "token_sesion": licencia.token_sesion
+            })
 
 
 # --- FUNCIÓN PARA COMPROBAR EXPIRACIÓN EN SEGUNDO PLANO ---
