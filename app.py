@@ -218,13 +218,12 @@ def handle_activacion(data):
             emit('license_response', {"success": False, "mensaje": "Licencia vinculada a otro dispositivo."})
 
         elif ahora > licencia.fecha_expiracion:
-            # CASO 3: EXPIRADA
             emit('license_response', {
                 "success": False,
                 "mensaje": "Licencia expirada. Renueve."
             })
             return
-
+        
         else:
     # CASO 4: REVALIDACIÓN
             token_cliente = data.get('token_sesion')
