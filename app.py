@@ -217,9 +217,13 @@ def handle_activacion(data):
             # CASO 2: BLOQUEO POR HWID
             emit('license_response', {"success": False, "mensaje": "Licencia vinculada a otro dispositivo."})
 
-        elif ahora.date() > licencia.fecha_expiracion.date():
+        elif ahora > licencia.fecha_expiracion:
             # CASO 3: EXPIRADA
-            emit('license_response', {"success": False, "mensaje": "Licencia expirada. Renueve."})
+            emit('license_response', {
+                "success": False,
+                "mensaje": "Licencia expirada. Renueve."
+            })
+            return
 
         else:
     # CASO 4: REVALIDACIÓN
