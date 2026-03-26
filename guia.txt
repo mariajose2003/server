@@ -1,0 +1,45 @@
+# 1. Crear la base de datos en Railway
+- Ingresa a https://railway.app
+- Crea un nuevo proyecto.
+- Añade un servicio de tipo "PostgreSQL".
+- Railway te dará una URL de conexión (DATABASE_URL).
+  Ejemplo: postgres://usuario:password@host:puerto/db
+
+# 2. Preparar tu proyecto local
+- Asegúrate de tener tu código en una carpeta limpia (por ejemplo, "server").
+- Incluye un archivo requirements.txt con tus dependencias:
+    flask
+    flask_sqlalchemy
+    flask_socketio
+    python-dotenv
+    sendgrid
+    psycopg2-binary
+- Incluye un archivo Procfile para Railway:
+    web: python import_os.py
+  (En tu caso sería "web: python import_os.py" o el nombre real del archivo principal)
+
+# 3. Subir tu proyecto a GitHub
+- Crea un repositorio en GitHub.
+- Haz commit y push de tu proyecto (incluyendo requirements.txt y Procfile).
+
+# 4. Importar el proyecto en Railway
+- En Railway, crea un nuevo servicio → "Deploy from GitHub".
+- Selecciona tu repositorio.
+- Railway instalará automáticamente las dependencias desde requirements.txt.
+
+# 5. Configurar variables de entorno en Railway
+- En la sección "Variables" del proyecto, añade:
+    DATABASE_PUBLIC_URL = (la URL pública que te dio Railway para PostgreSQL)
+    DATABASE_URL = (la URL que te dio Railway para PostgreSQL)
+    SENDGRID_API_KEY = (tu clave de SendGrid; regístrate en SendGrid, copia tu API Key y guárdala aquí)
+    MY_EMAIL = (tu correo remitente)
+- Opcional: PORT = 5000 (Railway suele asignar automáticamente).
+
+# 6. Arranque del servidor
+- Railway ejecutará tu Procfile → `web: python import_os.py`
+- Tu aplicación Flask+SocketIO quedará corriendo en Railway.
+- Podrás acceder a la URL pública que Railway te da (ejemplo: https://tuapp.up.railway.app).
+
+# 7. Verificación
+- Abre la URL en el navegador → debería responder con {"status": "API Activa", "message": "Conexión DB OK."}
+- Revisa los logs en Railway para confirmar que SocketIO está corriendo.
