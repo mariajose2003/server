@@ -227,7 +227,12 @@ def handle_activacion(data):
             
             # Solo validar token si existe en la BD (ya fue activado antes)
             if licencia.token_sesion and token_cliente != licencia.token_sesion:
-                emit('license_response', {"success": False, "mensaje": "Token inválido. Re-activa tu licencia."})
+                # Reset automático para permitir reactivación
+                licencia.hwid_activacion = None
+                licencia.token_sesion = None
+                licencia.socket_id = None
+                db.session.commit()
+                emit('license_response', {"success": False, "mensaje": "Sesión inválida. Ingresa tu clave nuevamente."})
                 return
             
             licencia.token_sesion = str(uuid4().hex[:32])
